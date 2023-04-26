@@ -1,2 +1,4 @@
 .env
 /repo
+/.chroma
+/vectors
