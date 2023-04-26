@@ -13,6 +13,7 @@ from langchain.vectorstores import Chroma
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks.base import CallbackManager
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from langchain.callbacks.openai_info import OpenAICallbackHandler
 
 load_dotenv()
 
@@ -80,12 +81,21 @@ if args.command == "query":
         Now answer the question using the code file(s) above.
         """
 
-        chat = ChatOpenAI(model=args.model, streaming=True, callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]), verbose=False, temperature=0.5)
+        chat = ChatOpenAI(
+            model=args.model,
+            max_tokens=500,
+            streaming=True,
+            callback_manager=CallbackManager([StreamingStdOutCallbackHandler(), OpenAICallbackHandler()]),
+            verbose=True,
+            temperature=0.5,
+        )
         system_message_prompt = SystemMessagePromptTemplate.from_template(template)
         chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
         chain = LLMChain(llm=chat, prompt=chat_prompt)
 
-        chain.run(code=code_str, query=query)
+        result = chain.run(code=code_str, query=query)
+
+        print(f"\n Final Result:\n{result}")
 
         print("\n\n")
 elif args.command == "embed":
@@ -105,4 +115,3 @@ elif args.command == "load":
     if not args.branch:
         args.branch = input("\033[34mWhat is the branch of the codebase?\n\033[0m")
     os.system(f"python load.py {args.url} {args.branch}")
-
