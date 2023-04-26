@@ -13,7 +13,6 @@ from langchain.vectorstores import Chroma
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks.base import CallbackManager
 from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from langchain.callbacks.openai_info import OpenAICallbackHandler
 
 load_dotenv()
 
@@ -44,6 +43,14 @@ if args.command == "query":
 
     vector_store = Chroma(args.collection, embeddings, persist_directory="vectors")
 
+    chat = ChatOpenAI(
+        model=args.model,
+        max_tokens=500,
+        streaming=True,
+        temperature=0.5,
+        callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]),
+        verbose=True,
+    )
     while True:
         query = input("\033[34mWhat question do you have about your repo?\n\033[0m")
 
@@ -51,9 +58,11 @@ if args.command == "query":
             print("\033[31mGoodbye!\n\033[0m")
             break
 
-        matched_docs = vector_store.similarity_search(query)
+        print("\n\n")
+        
+        matched_docs = vector_store.similarity_search(query, k=6)
         code_str = "".join(doc.page_content + "\n\n" for doc in matched_docs)
-        print("\n\033[35m" + code_str + "\n\033[32m")
+        # print("\n\033[35m" + code_str + "\n\033[32m")
 
         template = """
         You are Codebase AI. You are a superintelligent AI that answers questions about codebases.
@@ -76,26 +85,19 @@ if args.command == "query":
         Code file(s):
         {code}
         
-        [END OF CODE FILE(S)]w
+        [END OF CODE FILE(S)]
 
         Now answer the question using the code file(s) above.
         """
 
-        chat = ChatOpenAI(
-            model=args.model,
-            max_tokens=500,
-            streaming=True,
-            callback_manager=CallbackManager([StreamingStdOutCallbackHandler(), OpenAICallbackHandler()]),
-            verbose=True,
-            temperature=0.5,
-        )
         system_message_prompt = SystemMessagePromptTemplate.from_template(template)
         chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
         chain = LLMChain(llm=chat, prompt=chat_prompt)
 
         result = chain.run(code=code_str, query=query)
 
-        print(f"\n Final Result:\n{result}")
+        # print("\n\n")
+        # print(f"Final Result:\n{result}")
 
         print("\n\n")
 elif args.command == "embed":
