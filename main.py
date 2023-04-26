@@ -25,6 +25,7 @@ parser.add_argument("--url", type=str, help="url of the codebase")
 parser.add_argument("--branch", type=str, help="branch of the codebase")
 parser.add_argument("--collection", type=str, help="name of the collection")
 parser.add_argument("--extensions", type=str, help="comma separated list of extensions that are allowed")
+parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="name of the ChatOpenAI model to use (default: gpt-3.5-turbo)")
 
 args = parser.parse_args()
 
@@ -79,7 +80,7 @@ if args.command == "query":
         Now answer the question using the code file(s) above.
         """
 
-        chat = ChatOpenAI(streaming=True, callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]), verbose=True, temperature=0.5)
+        chat = ChatOpenAI(model=args.model, streaming=True, callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]), verbose=False, temperature=0.5)
         system_message_prompt = SystemMessagePromptTemplate.from_template(template)
         chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
         chain = LLMChain(llm=chat, prompt=chat_prompt)
@@ -104,3 +105,4 @@ elif args.command == "load":
     if not args.branch:
         args.branch = input("\033[34mWhat is the branch of the codebase?\n\033[0m")
     os.system(f"python load.py {args.url} {args.branch}")
+
