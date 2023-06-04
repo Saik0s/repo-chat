@@ -3,7 +3,6 @@
 import os
 import argparse
 from dotenv import load_dotenv
-from langchain import LLMChain
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.prompts.chat import (
     ChatPromptTemplate,
@@ -11,8 +10,7 @@ from langchain.prompts.chat import (
 )
 from langchain.vectorstores import Chroma
 from langchain.chat_models import ChatOpenAI
-from langchain.callbacks.base import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+import numpy as np
 
 load_dotenv()
 
@@ -20,12 +18,14 @@ embeddings = OpenAIEmbeddings()
 
 parser = argparse.ArgumentParser(description="Process some integers.")
 parser.add_argument("--command", type=str, help="embed, load or query")
-parser.add_argument("--path", type=str, help="path to the codebase")
+parser.add_argument("--path", type=str, default="repo", help="path to the codebase")
 parser.add_argument("--url", type=str, help="url of the codebase")
 parser.add_argument("--branch", type=str, help="branch of the codebase")
 parser.add_argument("--collection", type=str, help="name of the collection")
 parser.add_argument("--extensions", type=str, help="comma separated list of extensions that are allowed")
-parser.add_argument("--model", type=str, default="gpt-3.5-turbo", help="name of the ChatOpenAI model to use (default: gpt-3.5-turbo)")
+parser.add_argument(
+    "--model", type=str, default="gpt-3.5-turbo", help="name of the ChatOpenAI model to use (default: gpt-3.5-turbo)"
+)
 
 args = parser.parse_args()
 
@@ -46,10 +46,10 @@ if args.command == "query":
     chat = ChatOpenAI(
         model=args.model,
         max_tokens=500,
-        streaming=True,
+        streaming=False,
         temperature=0.5,
-        callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]),
-        verbose=True,
+        # callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]),
+        verbose=False,
     )
     while True:
         query = input("\033[34mWhat question do you have about your repo?\n\033[0m")
@@ -59,9 +59,24 @@ if args.command == "query":
             break
 
         print("\n\n")
-        
-        matched_docs = vector_store.similarity_search(query, k=6)
-        code_str = "".join(doc.page_content + "\n\n" for doc in matched_docs)
+
+        from langchain.retrievers import SVMRetriever
+        from langchain.embeddings import OpenAIEmbeddings
+
+        all_docs = vector_store._client._get(
+            collection_id=vector_store._collection.id, include=["documents", "embeddings", "metadatas"]
+        )
+        retriever = SVMRetriever(
+            embeddings=OpenAIEmbeddings(),
+            index=np.array(all_docs["embeddings"]),
+            texts=list(all_docs["documents"]),
+            k=15,
+        )
+        from langchain.chains import RetrievalQA
+
+        # matched_docs = retriever.get_relevant_documents(query)
+        # matched_docs = vector_store.similarity_search(query, k=6)
+        # code_str = "".join(doc.page_content + "\n\n" for doc in matched_docs)
         # print("\n\033[35m" + code_str + "\n\033[32m")
 
         template = """
@@ -80,11 +95,11 @@ if args.command == "query":
         Here is the user's question and code file(s) you found to answer the question:
 
         Question:
-        {query}
+        {question}
 
         Code file(s):
-        {code}
-        
+        {context}
+
         [END OF CODE FILE(S)]
 
         Now answer the question using the code file(s) above.
@@ -92,12 +107,18 @@ if args.command == "query":
 
         system_message_prompt = SystemMessagePromptTemplate.from_template(template)
         chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
-        chain = LLMChain(llm=chat, prompt=chat_prompt)
 
-        result = chain.run(code=code_str, query=query)
+        chain_type_kwargs = {"question_prompt": chat_prompt}
+        qa = RetrievalQA.from_chain_type(llm=chat, chain_type="refine", retriever=retriever, verbose=True)
+        print("Thinking...")
+        result = qa(query)
+
+        # chain = LLMChain(llm=chat, prompt=chat_prompt)
+
+        # result = chain.run(code=code_str, query=query)
 
         # print("\n\n")
-        # print(f"Final Result:\n{result}")
+        print(f"Final Result:\n{result}")
 
         print("\n\n")
 elif args.command == "embed":
@@ -106,7 +127,9 @@ elif args.command == "embed":
     if not args.collection:
         args.collection = input("\033[34mWhat is the name of the collection?\n\033[0m")
     if not args.extensions:
-        args.extensions = input("\033[34mWhat is the comma separated list of extensions that are allowed? (Empty to allow all)\n\033[0m")
+        args.extensions = input(
+            "\033[34mWhat is the comma separated list of extensions that are allowed? (Empty to allow all)\n\033[0m"
+        )
     if args.extensions:
         args.extensions = f"--extensions {args.extensions}"
     os.system(f"python embed.py {args.path} {args.collection} {args.extensions}")
@@ -116,4 +139,4 @@ elif args.command == "load":
         args.url = input("\033[34mWhat is the url of the codebase?\n\033[0m")
     if not args.branch:
         args.branch = input("\033[34mWhat is the branch of the codebase?\n\033[0m")
-    os.system(f"python load.py {args.url} {args.branch}")
+    os.system(f"python load.py {args.url} {args.branch} --path {args.path}")

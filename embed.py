@@ -2,9 +2,25 @@ import os
 import argparse
 from dotenv import load_dotenv
 from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import (
+    CharacterTextSplitter,
+    PythonCodeTextSplitter,
+    MarkdownTextSplitter,
+    RecursiveCharacterTextSplitter,
+    Language,
+)
 from langchain.vectorstores import Chroma
 from langchain.document_loaders import TextLoader
+import logging
+import rich
+from rich.traceback import install
+
+install(show_locals=True)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
+logger.format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 load_dotenv()
 
@@ -27,34 +43,61 @@ def generate_vector_store(path, collection_name, allowed_extensions):
         # skip directories in exclude_dir
         dirnames[:] = [d for d in dirnames if d not in exclude_dir]
 
+        total = len(filenames)
+        current = 0
+        logger.info(f"Processing directory {dirpath}, {total} files, path: {dirpath}")
         for file in filenames:
             _, file_extension = os.path.splitext(file)
 
+            current += 1
+            logger.info(f"Processing file {current}/{total} {file}")
             # skip files in exclude_files
             if file not in exclude_files and file_extension not in exclude_extensions:
                 file_path = os.path.join(dirpath, file)
                 if allowed_extensions and not file.endswith(tuple(allowed_extensions)):
                     continue
                 loader = TextLoader(file_path, encoding="ISO-8859-1")
-                documents.extend(loader.load())
+                original_documents = loader.load()
 
-    text_splitter = CharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-    docs = text_splitter.split_documents(documents)
+                # Split documents according to their extension
+                for doc in original_documents:
+                    file_extension_clean = file_extension.replace(".", "")
+                    if file_extension_clean == "py":
+                        file_extension_clean = "python"
+                    elif file_extension_clean == "md":
+                        file_extension_clean = "markdown"
 
-    for doc in docs:
+                    try:
+                        text_splitter = RecursiveCharacterTextSplitter.from_language(
+                            language=Language(file_extension_clean), chunk_size=500, chunk_overlap=150
+                        )
+                    except Exception as e:
+                        logger.info(
+                            f"{e}\nCould not find language for extension {file_extension_clean}, falling back to character splitter"
+                        )
+                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=150)
+
+                    split_documents = text_splitter.split_documents([doc])
+                    documents.extend(split_documents)
+
+    logger.info(f"Loaded {len(documents)} documents")
+
+    for doc in documents:
         source = doc.metadata["source"]
         cleaned_source = "/".join(source.split("/")[1:])
         doc.page_content = f"FILE NAME: {cleaned_source}" + "\n###\n" + doc.page_content.replace("\u0000", "")
 
-    embeddings = OpenAIEmbeddings()
+    embeddings = OpenAIEmbeddings(disallowed_special=set())
 
+    logger.info("Generating vectors")
     vector_store = Chroma.from_documents(
-        docs,
+        documents,
         embeddings,
         collection_name=collection_name,
         persist_directory="vectors",
     )
 
+    logger.info("Persisting vector store")
     vector_store.persist()
 
 

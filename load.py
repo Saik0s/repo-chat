@@ -6,6 +6,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Load git repo')
     parser.add_argument('url', type=str, help='URL of the git repo')
     parser.add_argument('branch', type=str, help='Branch of the git repo')
+    parser.add_argument('--path', type=str, default='repo', help='Path to the git repo')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -14,7 +15,7 @@ if __name__ == '__main__':
 
     loader = GitLoader(
         clone_url=args.url,
-        repo_path='repo',
+        repo_path=args.path,
         branch=args.branch,
     )
 
