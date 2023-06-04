@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 
-import os
 import argparse
-from dotenv import load_dotenv
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-)
-from langchain.vectorstores import Chroma
-from langchain.chat_models import ChatOpenAI
+import logging
+import os
+
 import numpy as np
+from dotenv import load_dotenv
+from langchain.chat_models import ChatOpenAI
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.prompts.chat import ChatPromptTemplate, SystemMessagePromptTemplate
+from langchain.vectorstores import Chroma
+from rich import print
+from rich.logging import RichHandler
+from rich.traceback import install
+from rich.markdown import Markdown
+from rich.console import Console
+
+install(show_locals=True)
+
+logging.basicConfig(
+    level="INFO",
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, tracebacks_show_locals=True)],
+)
 
 load_dotenv()
 
@@ -44,12 +57,24 @@ if args.command == "query":
     vector_store = Chroma(args.collection, embeddings, persist_directory="vectors")
 
     chat = ChatOpenAI(
-        model=args.model,
-        max_tokens=500,
+        model_name=args.model,
+        max_tokens=1000,
         streaming=False,
-        temperature=0.5,
-        # callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]),
+        temperature=0,
         verbose=False,
+    )
+
+    from langchain.embeddings import OpenAIEmbeddings
+    from langchain.retrievers import SVMRetriever
+
+    all_docs = vector_store._client._get(
+        collection_id=vector_store._collection.id, include=["documents", "embeddings", "metadatas"]
+    )
+    retriever = SVMRetriever(
+        embeddings=OpenAIEmbeddings(),
+        index=np.array(all_docs["embeddings"]),
+        texts=list(all_docs["documents"]),
+        k=30,
     )
     while True:
         query = input("\033[34mWhat question do you have about your repo?\n\033[0m")
@@ -60,24 +85,7 @@ if args.command == "query":
 
         print("\n\n")
 
-        from langchain.retrievers import SVMRetriever
-        from langchain.embeddings import OpenAIEmbeddings
-
-        all_docs = vector_store._client._get(
-            collection_id=vector_store._collection.id, include=["documents", "embeddings", "metadatas"]
-        )
-        retriever = SVMRetriever(
-            embeddings=OpenAIEmbeddings(),
-            index=np.array(all_docs["embeddings"]),
-            texts=list(all_docs["documents"]),
-            k=15,
-        )
         from langchain.chains import RetrievalQA
-
-        # matched_docs = retriever.get_relevant_documents(query)
-        # matched_docs = vector_store.similarity_search(query, k=6)
-        # code_str = "".join(doc.page_content + "\n\n" for doc in matched_docs)
-        # print("\n\033[35m" + code_str + "\n\033[32m")
 
         template = """
         You are Codebase AI. You are a superintelligent AI that answers questions about codebases.
@@ -108,17 +116,24 @@ if args.command == "query":
         system_message_prompt = SystemMessagePromptTemplate.from_template(template)
         chat_prompt = ChatPromptTemplate.from_messages([system_message_prompt])
 
-        chain_type_kwargs = {"question_prompt": chat_prompt}
-        qa = RetrievalQA.from_chain_type(llm=chat, chain_type="refine", retriever=retriever, verbose=True)
+        # question_prompt
+        # chain_type="map_reduce",
+
+        chain_type_kwargs = {"prompt": chat_prompt, "verbose": True}
+        qa = RetrievalQA.from_chain_type(
+            llm=chat,
+            retriever=retriever,
+            verbose=True,
+            chain_type_kwargs=chain_type_kwargs,
+            return_source_documents=True,
+        )
         print("Thinking...")
         result = qa(query)
 
-        # chain = LLMChain(llm=chat, prompt=chat_prompt)
+        print("Final Result:")
+        print(result)
 
-        # result = chain.run(code=code_str, query=query)
-
-        # print("\n\n")
-        print(f"Final Result:\n{result}")
+        Console().print(Markdown(result["result"]))
 
         print("\n\n")
 elif args.command == "embed":
